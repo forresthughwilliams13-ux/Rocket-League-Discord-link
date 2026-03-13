@@ -224,7 +224,6 @@ def main():
 
     # Send one startup message the first time this deployment runs
     if not state.get("startup_message_sent"):
-        send_discord_message("✅ Rocket League update bot is live.")
         state["startup_message_sent"] = True
         save_state(state)
 

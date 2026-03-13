@@ -6,181 +6,243 @@ from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1481941481605431388/ywDVOnXcd8cZHD2Zi6RP3djnfd57xyRMIR7uCFA65_QHuss3qVuRRtyRFJuxbDpYpAw_"
+# =========================
+# CONFIG
+# =========================
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+NEWS_URL = "https://www.rocketleague.com/news"
+STATUS_API_URL = "https://status.epicgames.com/api/v2/summary.json"
+STATE_FILE = "rocket_league_state.json"
+CHECK_INTERVAL_SECONDS = 600  # 10 minutes
 
-NEWS_URL = "https://www.rocketleague.com/en/news"
-PATCH_URL = "https://www.rocketleague.com/news/tag/patch-notes"
-STATUS_URL = "https://status.epicgames.com/"
-
-STATE_FILE = "rocket_league_seen.json"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; RocketLeagueDiscordUpdater/1.0)"
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Referer": "https://www.rocketleague.com/",
 }
 
+# =========================
+# HELPERS
+# =========================
+def ensure_env():
+    if not WEBHOOK_URL:
+        raise RuntimeError(
+            "DISCORD_WEBHOOK_URL is not set. Add it in Railway > Service > Variables."
+        )
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"seen_news": [], "last_status": ""}
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
 
+    return {
+        "seen_news_urls": [],
+        "last_rl_status": None,
+        "startup_message_sent": False,
+    }
 
 def save_state(state):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
-
 def send_discord_message(content=None, embeds=None):
     payload = {
         "username": "Rocket League Updates",
-        "avatar_url": "https://www.rocketleague.com/images/meta/rl_og_image.jpg",
     }
+
     if content:
         payload["content"] = content
     if embeds:
         payload["embeds"] = embeds
 
-    r = requests.post(WEBHOOK_URL, json=payload, timeout=20)
-    r.raise_for_status()
+    response = requests.post(WEBHOOK_URL, json=payload, timeout=20)
+    response.raise_for_status()
 
+def fetch_html(url):
+    session = requests.Session()
 
-def fetch_page(url):
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    r.raise_for_status()
-    return r.text
+    # Warm up session on homepage first
+    session.get("https://www.rocketleague.com/", headers=HEADERS, timeout=20)
 
+    response = session.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
+    response.raise_for_status()
+    return response.text
 
-def parse_news_items(html, base_url="https://www.rocketleague.com"):
+def fetch_json(url):
+    response = requests.get(url, timeout=20)
+    response.raise_for_status()
+    return response.json()
+
+# =========================
+# NEWS PARSING
+# =========================
+def parse_news_page(html):
     soup = BeautifulSoup(html, "html.parser")
     items = []
 
-    # Finds article links on RL news pages
+    # Grab article links that live under /news/
     for a in soup.find_all("a", href=True):
-        href = a["href"]
+        href = a["href"].strip()
         text = a.get_text(" ", strip=True)
 
-        if not text:
+        if not href:
             continue
 
-        if "/news/" in href or href.startswith("/news"):
-            full_url = href if href.startswith("http") else base_url.rstrip("/") + href
-            title = text.strip()
+        if href.startswith("/news/"):
+            full_url = "https://www.rocketleague.com" + href
+        elif href.startswith("https://www.rocketleague.com/news/"):
+            full_url = href
+        else:
+            continue
 
-            if len(title) < 8:
-                continue
+        title = " ".join(text.split())
+        if len(title) < 8:
+            continue
 
-            items.append({
-                "id": full_url,
-                "title": title,
-                "url": full_url
-            })
+        items.append({
+            "url": full_url,
+            "title": title
+        })
 
-    # De-duplicate while keeping order
+    # De-duplicate while preserving order
     seen = set()
-    unique = []
+    deduped = []
     for item in items:
-        if item["id"] not in seen:
-            seen.add(item["id"])
-            unique.append(item)
+        if item["url"] not in seen:
+            seen.add(item["url"])
+            deduped.append(item)
 
-    return unique[:10]
-
-
-def parse_epic_status(html):
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text("\n", strip=True)
-
-    # Keep this simple and robust
-    if "Rocket League Operational" in text:
-        return "Operational"
-    if "Rocket League" in text:
-        # fallback if wording changes
-        idx = text.find("Rocket League")
-        snippet = text[idx:idx + 200]
-        return snippet
-    return "Unknown"
-
+    return deduped[:20]
 
 def check_news(state):
-    new_posts = []
+    html = fetch_html(NEWS_URL)
+    items = parse_news_page(html)
 
-    for url, label in [
-        (NEWS_URL, "News"),
-        (PATCH_URL, "Patch Notes"),
-    ]:
-        html = fetch_page(url)
-        items = parse_news_items(html)
+    new_items = [item for item in items if item["url"] not in state["seen_news_urls"]]
 
-        for item in items:
-            if item["id"] not in state["seen_news"]:
-                new_posts.append((label, item))
-
-    # Deduplicate across both pages
-    deduped = []
-    seen_ids = set()
-    for label, item in new_posts:
-        if item["id"] not in seen_ids:
-            seen_ids.add(item["id"])
-            deduped.append((label, item))
-
-    # Post oldest first if multiple new ones appear
-    deduped.reverse()
-
-    for label, item in deduped:
+    # Post oldest first so Discord reads in order
+    for item in reversed(new_items):
         embed = {
             "title": item["title"],
             "url": item["url"],
-            "description": f"New Rocket League {label.lower()} update posted.",
-            "footer": {"text": "Official Rocket League source"},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "description": "New official Rocket League post detected.",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "footer": {"text": "rocketleague.com"}
         }
         send_discord_message(
-            content="🚗⚽ New Rocket League update detected!",
+            content="🚗⚽ **New Rocket League update posted**",
             embeds=[embed]
         )
-        state["seen_news"].append(item["id"])
+        state["seen_news_urls"].append(item["url"])
 
-    # Keep state from growing forever
-    state["seen_news"] = state["seen_news"][-200:]
+    # Keep state file from growing forever
+    state["seen_news_urls"] = state["seen_news_urls"][-200:]
 
+# =========================
+# STATUS CHECKING
+# =========================
+def get_rocket_league_status(summary_json):
+    components = summary_json.get("components", [])
+
+    # Try exact Rocket League component first
+    for component in components:
+        if component.get("name") == "Rocket League":
+            return {
+                "name": component.get("name"),
+                "status": component.get("status"),
+            }
+
+    # Fallback if naming changes
+    for component in components:
+        name = (component.get("name") or "").lower()
+        if "rocket league" in name:
+            return {
+                "name": component.get("name"),
+                "status": component.get("status"),
+            }
+
+    return {
+        "name": "Rocket League",
+        "status": "unknown",
+    }
+
+def humanize_status(status):
+    mapping = {
+        "operational": "Operational",
+        "degraded_performance": "Degraded Performance",
+        "partial_outage": "Partial Outage",
+        "major_outage": "Major Outage",
+        "under_maintenance": "Under Maintenance",
+        "unknown": "Unknown",
+    }
+    return mapping.get(status, status.replace("_", " ").title())
 
 def check_status(state):
-    html = fetch_page(STATUS_URL)
-    current_status = parse_epic_status(html)
+    summary = fetch_json(STATUS_API_URL)
+    rl_status = get_rocket_league_status(summary)
+    current_status = rl_status["status"]
 
-    if not state["last_status"]:
-        state["last_status"] = current_status
+    if state["last_rl_status"] is None:
+        state["last_rl_status"] = current_status
         return
 
-    if current_status != state["last_status"]:
+    if current_status != state["last_rl_status"]:
+        previous = humanize_status(state["last_rl_status"])
+        current = humanize_status(current_status)
+
         embed = {
-            "title": "Rocket League Service Status Changed",
-            "url": STATUS_URL,
-            "description": f"Previous: **{state['last_status']}**\nCurrent: **{current_status}**",
-            "footer": {"text": "Epic Games Public Status"},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "title": "Rocket League server status changed",
+            "url": "https://status.epicgames.com/",
+            "description": f"**Previous:** {previous}\n**Current:** {current}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "footer": {"text": "status.epicgames.com"}
         }
         send_discord_message(
-            content="📡 Rocket League server status update detected!",
+            content="📡 **Rocket League status update**",
             embeds=[embed]
         )
-        state["last_status"] = current_status
 
+        state["last_rl_status"] = current_status
 
+# =========================
+# MAIN LOOP
+# =========================
 def main():
+    ensure_env()
     state = load_state()
+
+    # Send one startup message the first time this deployment runs
+    if not state.get("startup_message_sent"):
+        send_discord_message("✅ Rocket League update bot is live.")
+        state["startup_message_sent"] = True
+        save_state(state)
 
     while True:
         try:
+            print(f"[{datetime.now().isoformat()}] Checking Rocket League news and status...")
             check_news(state)
             check_status(state)
             save_state(state)
+            print("Check complete.")
         except Exception as e:
             print(f"[ERROR] {e}")
 
-        # Check every 10 minutes
-        time.sleep(600)
-
+        time.sleep(CHECK_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
     main()
+
+
+  
+   
+    

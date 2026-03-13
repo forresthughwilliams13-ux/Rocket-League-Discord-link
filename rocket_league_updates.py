@@ -218,6 +218,7 @@ def check_status(state):
 # MAIN LOOP
 # =========================
 def main():
+    send_discord_message("🚀 Rocket League update bot is live")
     ensure_env()
     state = load_state()
 

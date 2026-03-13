@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
-WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1481941481605431388/ywDVOnXcd8cZHD2Zi6RP3djnfd57xyRMIR7uCFA65_QHuss3qVuRRtyRFJuxbDpYpAw_")
+WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1482101116983447753/yqAsBHkyK3Reh4B78jYjPcx3HAWtEw4s0OzrsDwP81tXHgPJQFWnSChgWMRC1pIX9e_0")
 NEWS_URL = "https://www.rocketleague.com/news"
 STATUS_API_URL = "https://status.epicgames.com/api/v2/summary.json"
 STATE_FILE = "rocket_league_state.json"

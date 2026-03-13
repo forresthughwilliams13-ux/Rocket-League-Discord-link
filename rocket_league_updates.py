@@ -26,12 +26,6 @@ HEADERS = {
     "Referer": "https://www.rocketleague.com/",
 }
 
-
-def ensure_env() -> None:
-    if not WEBHOOK_URL:
-        raise RuntimeError("DISCORD_WEBHOOK_URL is not set in Railway Variables.")
-
-
 def load_state() -> dict:
     if os.path.exists(STATE_FILE):
         try:
@@ -215,7 +209,6 @@ def check_status(state: dict) -> None:
 
 
 def main() -> None:
-    ensure_env()
     state = load_state()
 
     print("Webhook loaded:", bool(WEBHOOK_URL))

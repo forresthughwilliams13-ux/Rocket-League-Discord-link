@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 # =========================
 # CONFIG
 # =========================
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1481941481605431388/ywDVOnXcd8cZHD2Zi6RP3djnfd57xyRMIR7uCFA65_QHuss3qVuRRtyRFJuxbDpYpAw_")
 NEWS_URL = "https://www.rocketleague.com/news"
 STATUS_API_URL = "https://status.epicgames.com/api/v2/summary.json"
 STATE_FILE = "rocket_league_state.json"

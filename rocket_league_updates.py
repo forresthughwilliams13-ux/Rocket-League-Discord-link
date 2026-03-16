@@ -2,6 +2,7 @@
 import json
 import os
 import time
+import feedparser
 from datetime import datetime, timezone
 
 import requests
@@ -119,8 +120,6 @@ def parse_news_page(html: str) -> list[dict]:
 
     print(f"[DEBUG] Parsed news items: {len(deduped)}")
     return deduped[:20]
-
-    import feedparser
 
 def check_news(state):
     try:

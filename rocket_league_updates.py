@@ -120,33 +120,34 @@ def parse_news_page(html: str) -> list[dict]:
     print(f"[DEBUG] Parsed news items: {len(deduped)}")
     return deduped[:20]
 
+    import feedparser
 
-def check_news(state: dict) -> None:
+def check_news(state):
     try:
-        html = fetch_html(NEWS_URL)
-        items = parse_news_page(html)
-        new_items = [item for item in items if item["url"] not in state["seen_news_urls"]]
+        feed = feedparser.parse("https://www.rocketleague.com/rss")
 
-        print(f"[DEBUG] New news items: {len(new_items)}")
+        new_posts = []
 
-        for item in reversed(new_items):
-            embed = {
-                "title": item["title"],
-                "url": item["url"],
-                "description": "New official Rocket League post detected.",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "footer": {"text": "rocketleague.com"},
-            }
+        for entry in feed.entries:
+            url = entry.link
+
+            if url not in state["seen_news_urls"]:
+                new_posts.append(entry)
+
+        print(f"[DEBUG] New news items: {len(new_posts)}")
+
+        for entry in reversed(new_posts):
+
             send_discord_message(
-                content="🚗⚽ New Rocket League update posted",
-                embeds=[embed],
+                f"📰 **New Rocket League Update**\n"
+                f"**{entry.title}**\n"
+                f"{entry.link}"
             )
-            state["seen_news_urls"].append(item["url"])
 
-        state["seen_news_urls"] = state["seen_news_urls"][-200:]
+            state["seen_news_urls"].append(entry.link)
+
     except Exception as e:
         print(f"[ERROR] check_news failed: {e}")
-
 
 def get_rocket_league_status(summary_json: dict) -> str:
     components = summary_json.get("components", [])
